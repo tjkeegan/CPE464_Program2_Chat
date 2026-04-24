@@ -1,6 +1,6 @@
 #include "recvPDU.h"
 
-int recvPDU(int clientSocket, uint8_t * dataBuffer, int bufferSize) {
+int recvPDU(int clientSocket, uint8_t * dataBuffer, int bufferSize, uint8_t *flag) {
     // receive payload size [2 bytes], error check, and check if socket closed
     uint16_t payload_len;
     // use &payload_len because recv asks for a pointer, use MSG_WAITALL to block until all bytes are received
@@ -35,5 +35,6 @@ int recvPDU(int clientSocket, uint8_t * dataBuffer, int bufferSize) {
     }
 
     // return size of payload
+    *flag = dataBuffer[0];
     return bytes_received;
 }

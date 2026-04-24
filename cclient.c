@@ -30,31 +30,31 @@
 #define MAXBUF 1024
 #define DEBUG_FLAG 1
 
-void sendToServer(int socketNum);
+void sendToServer(int serverSocket);
 int readFromStdin(uint8_t * buffer);
 void checkArgs(int argc, char * argv[]);
-void clientControl(int socketNum);
+void clientControl(int serverSocket);
 
 int main(int argc, char * argv[])
 {
-	int socketNum = 0;         //socket descriptor
+	int serverSocket = 0;         //socket descriptor
 	
 	checkArgs(argc, argv);
 
 	/* set up the TCP Client socket  */
-	socketNum = tcpClientSetup(argv[1], argv[2], DEBUG_FLAG);
+	serverSocket = tcpClientSetup(argv[1], argv[2], DEBUG_FLAG);
 	
 	// initialize poll set, add main server socket and stdin
 	setupPollSet();
 	addToPollSet(STDIN_FILENO);
-	addToPollSet(socketNum);
+	addToPollSet(serverSocket);
 
-	clientControl(socketNum);
+	clientControl(serverSocket);
 	
 	return 0;
 }
 
-void sendToServer(int socketNum)
+void sendToServer(int serverSocket)
 {
 	uint8_t buffer[MAXBUF];   //data buffer
 	int sendLen = 0;        //amount of data to send
@@ -64,21 +64,21 @@ void sendToServer(int socketNum)
 	sendLen = readFromStdin(buffer);
 	printf("read: %s string len: %d (including null)\n", buffer, sendLen);
 	
-	sent =  sendPDU(socketNum, buffer, sendLen);
+	sent = sendPDU(serverSocket, buffer, sendLen, 1);
 	if (sent < 0)
 	{
 		perror("send call");
 		exit(-1);
 	}
 
-	printf("Socket:%d: Sent, Length: %d msg: %s\n", socketNum, sent, buffer);
+	printf("Socket:%d: Sent, Length: %d msg: %s\n", serverSocket, sent, buffer);
 	
 	// just for debugging, recv a message from the server to prove it works.
-	recvBytes = safeRecv(socketNum, buffer, MAXBUF, 0);
-	printf("Socket %d: Byte recv: %d message: %s\n", socketNum, recvBytes, buffer);
+	recvBytes = safeRecv(serverSocket, buffer, MAXBUF, 0);
+	printf("Socket %d: Byte recv: %d message: %s\n", serverSocket, recvBytes, buffer);
 }
 
-void clientControl(int socketNum)
+void clientControl(int serverSocket)
 {
 	int ready_socket = -1;
 
@@ -91,16 +91,17 @@ void clientControl(int socketNum)
 
 		// stdin ready
 		if (ready_socket == STDIN_FILENO) {
-			sendToServer(socketNum);
+			sendToServer(serverSocket);
 		}
 
 		// server message ready
 		else {
 			uint8_t dataBuffer[MAXBUF];
 			int messageLen = 0;
+			uint8_t flag = 0;
 
 			//now get the data from the server socket
-			if ((messageLen = recvPDU(socketNum, dataBuffer, MAXBUF)) < 0)
+			if ((messageLen = recvPDU(serverSocket, dataBuffer, MAXBUF, &flag)) < 0)
 			{
 				perror("recv call");
 				exit(-1);
@@ -108,14 +109,14 @@ void clientControl(int socketNum)
 
 			if (messageLen > 0)
 			{
-				printf("Socket %d: Message received, length: %d Data: %s\n", socketNum, messageLen, dataBuffer);
+				printf("Socket %d: Message received, length: %d Data: %s\n", serverSocket, messageLen, dataBuffer);
 			}
 			else
 			{
 				printf("Server terminated\n");
 				// remove from poll set and close socket
-				removeFromPollSet(socketNum);
-				close(socketNum);
+				removeFromPollSet(serverSocket);
+				close(serverSocket);
 				exit(1);
 			}
 		}

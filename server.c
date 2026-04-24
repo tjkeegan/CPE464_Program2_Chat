@@ -24,7 +24,9 @@
 #include "networks.h"
 #include "safeUtil.h"
 #include "recvPDU.h"
+#include "sendPDU.h"
 #include "pollLib.h"
+#include "handle.h"
 
 #define MAXBUF 1024
 #define DEBUG_FLAG 1
@@ -46,6 +48,7 @@ int main(int argc, char *argv[])
 	// initialize poll set and add main server socket to it
 	setupPollSet();
 	addToPollSet(mainServerSocket);
+	handleInit();
 
 	// start looping for processing client connections and data
 	serverControl(mainServerSocket);
@@ -87,9 +90,10 @@ void recvFromClient(int clientSocket)
 {
 	uint8_t dataBuffer[MAXBUF];
 	int messageLen = 0;
+	uint8_t flag = 0;
 	
 	//now get the data from the client_socket
-	if ((messageLen = recvPDU(clientSocket, dataBuffer, MAXBUF)) < 0)
+	if ((messageLen = recvPDU(clientSocket, dataBuffer, MAXBUF, &flag)) < 0)
 	{
 		perror("recv call");
 		exit(-1);
@@ -97,8 +101,15 @@ void recvFromClient(int clientSocket)
 
 	if (messageLen > 0)
 	{
-		printf("Message received on socket %d, length: %d Data: %s\n", clientSocket, messageLen, dataBuffer);
+		printf("Message received on socket %d, Flag: %d length: %d Data: %s\n", flag, clientSocket, messageLen, dataBuffer);
 		
+		switch(flag) {
+			case 1:
+				// add to 
+				break;
+			default:
+				break;
+		}
 		// send it back to client (just to test sending is working... e.g. debugging)
 		// messageLen = safeSend(clientSocket, dataBuffer, messageLen, 0);
 		// printf("Socket %d: msg sent: %d bytes, text: %s\n", clientSocket, messageLen, dataBuffer);

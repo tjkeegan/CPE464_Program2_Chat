@@ -7,4 +7,4 @@
 
 #define PAYLOAD_SIZE_BYTES 2
 
-int recvPDU(int clientSocket, uint8_t * dataBuffer, int bufferSize);
+int recvPDU(int clientSocket, uint8_t * dataBuffer, int bufferSize, uint8_t *flag);
