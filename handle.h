@@ -1,5 +1,6 @@
 #include <stdlib.h>
 #include <stdint.h>
+#include <stdio.h>
 
 #define ALLOC_SIZE 10000 // 10KBytes
 
@@ -11,7 +12,7 @@ struct handleEntry {
 };
 
 void handleInit();
-void addHandle();
-void removeHandle();
-int findSocket();
-char *findHandle();
+void addHandle(int socket, char *handle);
+int removeHandle(char *handle);
+// int findSocket();
+// char *findHandle();

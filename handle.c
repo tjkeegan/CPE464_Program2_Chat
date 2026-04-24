@@ -34,7 +34,7 @@ int removeHandle(char *handle) {
         if (handleTable[i].handle == handle) {
             size_t entrySize = sizeof(handleTable[i]);
             for (int j = i; j < tableIndex - 1; j++) {
-                handleTable[j] = handleTable[j++];
+                handleTable[j] = handleTable[j + 1];
             }
             handleTable = realloc(handleTable, usedSize - entrySize);
             if (handleTable == NULL) {

@@ -19,6 +19,7 @@ int recvPDU(int clientSocket, uint8_t * dataBuffer, int bufferSize, uint8_t *fla
 
     // check if bufferSize is large enough for payload
     if (payload_len > bufferSize) {
+        printf("%d", payload_len);
         perror("payload bigger than buffer");
         exit(1);
     }
@@ -36,5 +37,5 @@ int recvPDU(int clientSocket, uint8_t * dataBuffer, int bufferSize, uint8_t *fla
 
     // return size of payload
     *flag = dataBuffer[0];
-    return bytes_received;
+    return bytes_received - FLAG_SIZE;
 }
