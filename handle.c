@@ -5,7 +5,7 @@ int tableIndex = 0;
 size_t tableSize = 0;
 size_t usedSize = 0;
 
-void handleInit() {
+void handleSetUp() {
     handleTable = malloc(ALLOC_SIZE);
     if (handleTable == NULL) {
         perror("Failed to allocate Handle Table");
@@ -14,8 +14,21 @@ void handleInit() {
     tableSize = ALLOC_SIZE;
 }
 
+void handleTeardown() {
+    for (int i = 0; i < tableIndex; i++) {
+        free(handleTable[i].handle);
+    }
+    free(handleTable);
+}
+
 void addHandle(int socket, char *handle) {
-    struct handleEntry newEntry = {socket, handle};
+    char *handleDup = malloc(strlen(handle) + 1); // +1 for '\0'
+    if (handleDup == NULL) {
+        perror("Failed to allocate handleDup during addHandle()");
+        exit(1);
+    }
+    memcpy(handleDup, handle, strlen(handle) + 1); // +1 for '\0'
+    struct handleEntry newEntry = {socket, handleDup};
     size_t newSize = usedSize + sizeof(newEntry);
     if (newSize > tableSize) {
         handleTable = realloc(handleTable, newSize);
@@ -33,6 +46,7 @@ int removeHandle(char *handle) {
     for (int i = 0; i < tableIndex; i++) {
         if (handleTable[i].handle == handle) {
             size_t entrySize = sizeof(handleTable[i]);
+            free(handleTable[i].handle);
             for (int j = i; j < tableIndex - 1; j++) {
                 handleTable[j] = handleTable[j + 1];
             }
@@ -51,4 +65,13 @@ void printHandleTable() {
     for (int i = 0; i < tableIndex; i++) {
         printf("Handle %d: Name: %s\tSocket: %d\n", i, handleTable[i].handle, handleTable[i].socket);
     }
+}
+
+int findSocket(uint8_t *handle, uint8_t handleLen) {
+    for (int i = 0; i < tableIndex; i++) {
+        if (!memcmp(handleTable[i].handle, (char *) handle, handleLen)) {
+            return handleTable[i].socket;
+        }
+    }
+    return -1;
 }

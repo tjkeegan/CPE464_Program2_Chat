@@ -5,7 +5,7 @@
 #include <sys/socket.h>
 #include <arpa/inet.h>
 
-#define PAYLOAD_LENGTH_SIZE 2
+#define LENGTH_OF_PDU_SIZE 2
 #define FLAG_SIZE 1
 
-int sendPDU(int socketNumber, uint8_t * dataBuffer, int lengthOfData, uint8_t flag);
+int sendPDU(int socketNumber, uint8_t *dataBuffer, int lengthOfData, uint8_t flag);

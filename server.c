@@ -35,6 +35,9 @@ void recvFromClient(int clientSocket);
 int checkArgs(int argc, char *argv[]);
 void serverControl();
 
+void recvInitPacket(int clientSocket, uint8_t *dataBuffer);
+void recvMessagePacket(uint8_t *dataBuffer, int bufferLen);
+
 int main(int argc, char *argv[])
 {
 	int mainServerSocket = 0;   //socket descriptor for the server socket
@@ -48,7 +51,8 @@ int main(int argc, char *argv[])
 	// initialize poll set and add main server socket to it
 	setupPollSet();
 	addToPollSet(mainServerSocket);
-	handleInit();
+
+	handleSetUp();
 
 	// start looping for processing client connections and data
 	serverControl(mainServerSocket);
@@ -59,29 +63,27 @@ int main(int argc, char *argv[])
 }
 
 void serverControl(int mainServerSocket) {
-	int ready_socket = -1;	// socket descriptor for poll return
+	int readySocket = -1;	// socket descriptor for poll return
 	int clientSocket = 0;   //socket descriptor for the client socket
-	// keep server running until ctl+C
+	
 	while (1) {
-		// check sockets with no timeout (==-1) and error check
-		ready_socket = pollCall(-1);
-		if (ready_socket < 0) {
+		
+		// GET READY SOCKET
+		readySocket = pollCall(-1); // blocks until a socket is ready
+		if (readySocket < 0) {
 			perror("timeout or poll error");
 			exit(1);
 		}
 
-		// main server socket
-		if (ready_socket == mainServerSocket) {
-			// wait for client to connect
-			clientSocket = tcpAccept(mainServerSocket, DEBUG_FLAG);
-			// add new client socket to poll set
-			addToPollSet(clientSocket);
+		// MAIN SERVER SOCKET READY
+		if (readySocket == mainServerSocket) {
+			clientSocket = tcpAccept(mainServerSocket, DEBUG_FLAG); // wait for client to connect
+			addToPollSet(clientSocket); // add new client socket to poll set
 		}
 
-		// client sockets
+		// CLIENT SOCKET READY
 		else {
-			// get data from client
-			recvFromClient(ready_socket);
+			recvFromClient(readySocket); // get data from client
 		}
 	}
 }
@@ -101,18 +103,26 @@ void recvFromClient(int clientSocket)
 
 	if (messageLen > 0)
 	{
-		printf("Message received on socket %d, Flag: %d length: %d Data: %s\n", flag, clientSocket, messageLen, dataBuffer);
+		//printf("Message received on socket %d, Flag: %d length: %d Data: %s\n", clientSocket, flag, messageLen, (char *)(dataBuffer + 1));
 		
 		switch(flag) {
-			case 1:
-				// add to 
+			case 1: // INIT PACKET
+				recvInitPacket(clientSocket, dataBuffer);
 				break;
+			case 4: // BROADCAST PACKET
+				recvBroadcastPacket(clientSocket, dataBuffer);
+				break;
+			case 5: // MESSAGE PACKET
+				recvMessagePacket(dataBuffer, messageLen);
+				break;
+			case 6: // MULTICAST PACKET
+				break;
+			case 10: // HANDLE LIST REQUEST
+				break;
+			
 			default:
 				break;
 		}
-		// send it back to client (just to test sending is working... e.g. debugging)
-		// messageLen = safeSend(clientSocket, dataBuffer, messageLen, 0);
-		// printf("Socket %d: msg sent: %d bytes, text: %s\n", clientSocket, messageLen, dataBuffer);
 	}
 	else
 	{
@@ -123,7 +133,25 @@ void recvFromClient(int clientSocket)
 	}
 }
 
+void recvInitPacket(int clientSocket, uint8_t *dataBuffer) {
+	uint8_t handleLen = dataBuffer[0];
+	char handle[handleLen];
+	memcpy(handle, dataBuffer + sizeof(handleLen), handleLen);
+	addHandle(clientSocket, handle);
+}
 
+void recvMessagePacket(uint8_t *dataBuffer, int bufferLen) {
+	uint8_t sendHandleLen = dataBuffer[0];
+	uint8_t destHandleLen = dataBuffer[sendHandleLen + 2]; // +2 for handleLen and numDest values
+	uint8_t destHandle[destHandleLen];
+	memcpy(destHandle, dataBuffer + sizeof(sendHandleLen) + sendHandleLen + 1 + sizeof(destHandleLen), destHandleLen);
+	int destSocket = findSocket(destHandle, destHandleLen);
+	safeSendPDU(destSocket, dataBuffer, bufferLen, 5);
+}
+
+void recvBroadcastPacket(int clientSocket, uint8_t *dataBuffer, int bufferLen) {
+	
+}
 
 int checkArgs(int argc, char *argv[])
 {

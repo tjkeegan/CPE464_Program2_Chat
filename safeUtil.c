@@ -23,6 +23,7 @@
 
 #include "networks.h"
 #include "safeUtil.h"
+#include "sendPDU.h"
 
 int safeRecv(int socketNum, uint8_t * buffer, int bufferLen, int flag)
 {
@@ -79,3 +80,11 @@ void * sCalloc(size_t nmemb, size_t size)
 	return returnValue;
 }
 
+void safeSendPDU(int serverSocket, uint8_t *buffer, int sendLen, int flag) {
+	int sent = sendPDU(serverSocket, buffer, sendLen, flag);
+	if (sent < 0)
+	{
+		perror("send call");
+		exit(-1);
+	}
+}

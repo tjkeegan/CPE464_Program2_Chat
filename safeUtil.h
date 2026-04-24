@@ -14,5 +14,7 @@ int safeSend(int socketNum, uint8_t * buffer, int bufferLen, int flag);
 void * srealloc(void *ptr, size_t size);
 void * sCalloc(size_t nmemb, size_t size);
 
+void safeSendPDU(int serverSocket, uint8_t *buffer, int sendLen, int flag);
+
 
 #endif
