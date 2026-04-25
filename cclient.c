@@ -31,26 +31,30 @@
 #define MAXBUF 1024
 #define DEBUG_FLAG 1
 
-void sendToServer(int serverSocket);
+void sendToServer();
 int readFromStdin(uint8_t *buffer);
 void checkArgs(int argc, char *argv[]);
-void clientControl(int serverSocket);
+void clientControl();
 
-void sendInitPacket(char *argv[], int serverSocket);
-void parseStdin(uint8_t *buffer, int sendLen, int serverSocket);
-void sendMessagePacket(char *destHandle, char *message, int serverSocket);
-void sendBroadcastPacket(char *message, int serverSocket);
-void listHandlesPacket(int serverSocket);
+void sendInitPacket(char *argv[]);
+void parseStdin(uint8_t *buffer, int sendLen);
+void sendMessagePacket(char *destHandle, char *message);
+void sendBroadcastPacket(char *message);
+void sendMulticastPacket(uint8_t numHandles, char *destHandles[], char *message);
+void sendTableRequestPacket();
 
 void determinePacketType(uint8_t *dataBuffer, int bufferLen, int flag);
+void recvHandleListLengthPacket(uint8_t *dataBuffer);
+void recvHandlePacket(uint8_t *dataBuffer, int bufferLen);
 void recvMessagePacket(uint8_t *dataBuffer, int bufferLen);
+void recvMulticastPacket(uint8_t *dataBuffer, int bufferLen);
 
-char *clientHandle;
+char *clientHandle; // no '\0'
+uint8_t clientHandleLen = 0;
+int serverSocket = 0;
 
 int main(int argc, char *argv[])
-{
-	int serverSocket = 0;         //socket descriptor
-	
+{	
 	checkArgs(argc, argv);
 
 	/* set up the TCP Client socket  */
@@ -61,41 +65,41 @@ int main(int argc, char *argv[])
 	addToPollSet(STDIN_FILENO);
 	addToPollSet(serverSocket);
 
-	sendInitPacket(argv, serverSocket);
+	sendInitPacket(argv);
 
-	clientControl(serverSocket);
+	clientControl();
 	
 	return 0;
 }
 
-void sendInitPacket(char *argv[], int serverSocket) {
+void sendInitPacket(char *argv[]) {
 	int bytesSent = 0;
 
 	// CREATE FLAG 1 PDU
-	uint8_t handleLen = strlen(argv[1]) + 1; // +1 for '\0'
-	uint8_t flag1PDU[sizeof(handleLen) + handleLen];
+	clientHandleLen = strlen(argv[1]); // no '\0'
+	uint8_t flag1PDU[sizeof(clientHandleLen) + clientHandleLen];
 
 	// set global variable
-	clientHandle = malloc(handleLen);
+	clientHandle = malloc(clientHandleLen);
 	if (clientHandle == NULL) {
 		perror("Failed to allocate clientHandle");
 		exit(1);
 	}	
-	memcpy(clientHandle, argv[1], handleLen);
+	memcpy(clientHandle, argv[1], clientHandleLen);
 
 	// ASSEMBLE FLAG 1 PDU 
-	memcpy(flag1PDU, &handleLen, sizeof(handleLen));
-	memcpy(flag1PDU + sizeof(handleLen), argv[1], handleLen);
+	memcpy(flag1PDU, &clientHandleLen, sizeof(clientHandleLen));
+	memcpy(flag1PDU + sizeof(clientHandleLen), argv[1], clientHandleLen);
 
 	// SEND FLAG 1 PDU
-	bytesSent = sendPDU(serverSocket, flag1PDU, sizeof(handleLen) + handleLen, 1);
+	bytesSent = sendPDU(serverSocket, flag1PDU, sizeof(clientHandleLen) + clientHandleLen, 1);
 	if (bytesSent < 0) {
 		perror("Failed to send Flag 1 PDU in initialPacker()");
 		exit(1);
 	}
 }
 
-void clientControl(int serverSocket) {
+void clientControl() {
 	int ready_socket = -1;
 
 	while (1) {
@@ -112,7 +116,7 @@ void clientControl(int serverSocket) {
 
 		// STDIN READY
 		if (ready_socket == STDIN_FILENO) {
-			sendToServer(serverSocket);
+			sendToServer();
 		}
 
 		// SERVER SOCKET READY
@@ -142,36 +146,75 @@ void clientControl(int serverSocket) {
 }
 
 void determinePacketType(uint8_t *dataBuffer, int bufferLen, int flag) {
-	// DETERMINE PACKET TYPE
+	int receivingHandleList = 0;
+	
 	switch (flag) {
-		case 2: // GOOD INIT HANDLE CONFIRMATION
+		case 11: // NUMHANDLES PACKET
+			receivingHandleList = 1;
+			recvHandleListLengthPacket(dataBuffer);
 			break;
-		case 3: // BAD INIT HANDLE ERROR
+		case 12: // HANDLE PACKET
+			if (!receivingHandleList) {
+				perror("Received Handle packet (12) when not requested");
+				exit(1);
+			}
+			recvHandlePacket(dataBuffer, bufferLen);
 			break;
-		case 4: // BROADCAST PACKET
+		case 13: // HANDLE PACKETS FINISHED
+			if (!receivingHandleList) {
+				perror("Received a Handle Packets Finished packet (13) when not requested");
+				exit(1);
+			}
+			receivingHandleList = 0;
 			break;
-		case 5: // MESSAGE PACKET
-			recvMessagePacket(dataBuffer, bufferLen);
-			break;
-		case 6: // MULTICAST PACKET
-			break;
-		case 7: // BAD DEST HANDLE ERROR
-			break;
-		case 11: // HANDLE LIST LENGTH
-			break;
-		case 12: // HANDLE LIST ITEM
-			break;
-		case 13: // HANDLE LIST FINISHED
-			break;
+		default:
+			if (receivingHandleList) {
+				perror("Received a non List Handle packet while listing handles");
+				exit(1);
+			}
+			else {
+				switch (flag) {
+					case 2: // GOOD INIT HANDLE CONFIRMATION
+						break;
+					case 3: // BAD INIT HANDLE ERROR
+						break;
+					case 4: // BROADCAST PACKET
+						break;
+					case 5: // MESSAGE PACKET
+						recvMessagePacket(dataBuffer, bufferLen);
+						break;
+					case 6: // MULTICAST PACKET
+						recvMulticastPacket(dataBuffer, bufferLen);
+						break;
+					case 7: // BAD DEST HANDLE ERROR
+						break;
+				}
+			}
 	}
+}
+
+void recvHandleListLengthPacket(uint8_t *dataBuffer) {
+	uint32_t numHandles_net;
+	memcpy(&numHandles_net, dataBuffer, sizeof(numHandles_net));
+	uint32_t numHandles = ntohl(numHandles_net);
+	printf("\nNumber of clients: %d\n", numHandles);
+}
+
+void recvHandlePacket(uint8_t *dataBuffer, int bufferLen) {
+	uint8_t handleLen = dataBuffer[0];
+	char handle[handleLen + 1]; // with '\0'
+	memcpy(handle, dataBuffer, handleLen);
+	handle[handleLen] = '\0';
+	printf("\n\t%s\n", handle);
 }
 
 void recvMessagePacket(uint8_t *dataBuffer, int bufferLen) {
 	
 	// PARSE SENDER HANDLE
 	uint8_t senderHandleLen = dataBuffer[0];
-	uint8_t senderHandle[senderHandleLen];
+	char senderHandle[senderHandleLen + 1]; // with '\0'
 	memcpy(senderHandle, dataBuffer + sizeof(senderHandleLen), senderHandleLen);
+	senderHandle[senderHandleLen] = '\0';
 
 	// PARSE DEST HANDLE LENGTH
 	uint8_t destHandleLen = dataBuffer[senderHandleLen + 2]; // +2 for senderHandleLen and numDest
@@ -179,21 +222,44 @@ void recvMessagePacket(uint8_t *dataBuffer, int bufferLen) {
 	// PARSE MESSAGE
 	uint8_t messageOffset = sizeof(senderHandleLen) + senderHandleLen + 1 + sizeof(destHandleLen) + destHandleLen;
 	int messageLen = bufferLen - messageOffset;
-	uint8_t message[messageLen];
+	char message[messageLen];
 	memcpy(message, dataBuffer + messageOffset, messageLen);
 
 	// PRINT MESSAGE
 	printf("\n%s: %s\n", senderHandle, message);
 }
 
-void sendToServer(int serverSocket)
+void recvMulticastPacket(uint8_t *dataBuffer, int bufferLen) {
+
+	// PARSE SENDER HANDLE
+	uint8_t senderHandleLen = dataBuffer[0];
+	uint8_t senderHandle[senderHandleLen];
+	memcpy(senderHandle, dataBuffer + sizeof(senderHandleLen), senderHandleLen);
+	
+	// PARSE PAST DEST HANDLES
+	uint8_t numHandles = dataBuffer[sizeof(senderHandleLen) + senderHandleLen];
+	int offset = sizeof(senderHandleLen) + senderHandleLen + sizeof(numHandles);
+	for (int i = 0; i < numHandles; i++) {
+		offset += (dataBuffer[offset] + 1);
+	}
+
+	// PARSE MESSAGE
+	uint8_t messageLen = bufferLen - offset;
+	uint8_t message[messageLen];
+	memcpy(message, dataBuffer + offset, messageLen);
+
+	// PRINT MESSAGE
+	printf("\n%s: %s\n", senderHandle, message);
+}
+
+void sendToServer()
 {
 	uint8_t buffer[MAXBUF];   //data buffer
 	int sendLen = 0;        //amount of data to send
 
 	sendLen = readFromStdin(buffer);
 
-	parseStdin(buffer, sendLen, serverSocket);
+	parseStdin(buffer, sendLen);
 }
 
 int readFromStdin(uint8_t * buffer)
@@ -220,12 +286,7 @@ int readFromStdin(uint8_t * buffer)
 	return inputLen;
 }
 
-void parseStdin(uint8_t *buffer, int sendLen, int serverSocket) {
-	//uint8_t numHandles = 0;
-	char *handle;
-	char *message;
-	//char *destHandle;
-	
+void parseStdin(uint8_t *buffer, int sendLen) {
 	if (sendLen < 2) {
 		printf("usage:");
 	}
@@ -233,26 +294,32 @@ void parseStdin(uint8_t *buffer, int sendLen, int serverSocket) {
 		char *command = strtok((char *) buffer, " ");
 		switch (command[1]) {
 			case 'M':
-			case 'm':
-				handle = strtok(NULL, " ");
-				message = strtok(NULL, "");
-				sendMessagePacket(handle, message, serverSocket);
+			case 'm': {
+				char *handle = strtok(NULL, " ");
+				char *message = strtok(NULL, "");
+				sendMessagePacket(handle, message);
 				break;
+			}
 			case 'B':
-			case 'b':
-				message = strtok(NULL, "");
-				broadcastPacket(message, serverSocket);
+			case 'b': {
+				/*char *message = strtok(NULL, "");
+				broadcastPacket(message);*/
 				break;
+			}
 			case 'C':
-			case 'c':
-				/*numHandles = (uint8_t)atoi(strtok(NULL, " "));
-				destHandle = strtok(NULL, " ");
-				// find a way to parse rest of handles into an array
-				multiCastPacket();*/
+			case 'c': { // brackets to make it ok to declare variables
+				uint8_t numHandles = (uint8_t)atoi(strtok(NULL, " "));
+				char *destHandles[numHandles];
+				for (int i = 0; i < numHandles; i++) {
+					destHandles[i] = strtok(NULL, " ");
+				}
+				char *message = strtok(NULL, "");
+				sendMulticastPacket(numHandles, destHandles, message);
 				break;
+			}
 			case 'L':
 			case 'l':
-				listHandlesPacket(serverSocket);
+				sendTableRequestPacket();
 				break;
 			default:
 				break;
@@ -260,55 +327,73 @@ void parseStdin(uint8_t *buffer, int sendLen, int serverSocket) {
 	}
 }
 
-void sendMessagePacket(char *destHandle, char *message, int serverSocket) {
+void sendMessagePacket(char *destHandle, char *message) {
 	// CREATE PDU
-	uint8_t sendHandleLen = strlen(clientHandle);
 	uint8_t numDest = 1;
 	uint8_t destHandleLen = strlen(destHandle);
-	uint8_t messageLen = strlen(message);
+	uint8_t messageLen = strlen(message) + 1; // with '\0'
 
-	int pduSize = sizeof(sendHandleLen) + sendHandleLen + sizeof(numDest) + sizeof(destHandleLen) + destHandleLen + messageLen;
+	int pduSize = sizeof(clientHandleLen) + clientHandleLen + sizeof(numDest) + sizeof(destHandleLen) + destHandleLen + messageLen;
 	uint8_t pdu[pduSize];
 
 	// ASSEMBLE PDU
-	memcpy(pdu, &sendHandleLen, sizeof(sendHandleLen));
-	memcpy(pdu + sizeof(sendHandleLen), clientHandle, sendHandleLen);
-	memcpy(pdu + sizeof(sendHandleLen) + sendHandleLen, &numDest, sizeof(numDest));
-	memcpy(pdu + sizeof(sendHandleLen) + sendHandleLen + sizeof(numDest), &destHandleLen, sizeof(destHandleLen));
-	memcpy(pdu + sizeof(sendHandleLen) + sendHandleLen + sizeof(numDest) + sizeof(destHandleLen), destHandle, destHandleLen);
-	memcpy(pdu + sizeof(sendHandleLen) + sendHandleLen + sizeof(numDest) + sizeof(destHandleLen) + destHandleLen, message, messageLen);
+	memcpy(pdu, &clientHandleLen, sizeof(clientHandleLen));
+	memcpy(pdu + sizeof(clientHandleLen), clientHandle, clientHandleLen);
+	memcpy(pdu + sizeof(clientHandleLen) + clientHandleLen, &numDest, sizeof(numDest));
+	memcpy(pdu + sizeof(clientHandleLen) + clientHandleLen + sizeof(numDest), &destHandleLen, sizeof(destHandleLen));
+	memcpy(pdu + sizeof(clientHandleLen) + clientHandleLen + sizeof(numDest) + sizeof(destHandleLen), destHandle, destHandleLen);
+	memcpy(pdu + sizeof(clientHandleLen) + clientHandleLen + sizeof(numDest) + sizeof(destHandleLen) + destHandleLen, message, messageLen);
 
 	// SEND PDU
 	safeSendPDU(serverSocket, pdu, pduSize, 5);
 }
 
 
-void sendBroadcastPacket(char *message, int serverSocket) {
+void sendBroadcastPacket(char *message) {
 	// CREATE PDU
-	uint8_t sendHandleLen = strlen(clientHandle);
-	uint8_t pduLen = sizeof(sendHandleLen) + sendHandleLen + strlen(message);
+	uint8_t pduLen = sizeof(clientHandleLen) + clientHandleLen + strlen(message);
 	uint8_t pdu[pduLen];
 
 	// ASSEMBLE PDU
-	memcpy(pdu, &sendHandleLen, sizeof(sendHandleLen));
-	memcpy(pdu + sizeof(sendHandleLen), clientHandle, sendHandleLen);
-	memcpy(pdu + sizeof(sendHandleLen) + sendHandleLen, message, strlen(message));
+	memcpy(pdu, &clientHandleLen, sizeof(clientHandleLen));
+	memcpy(pdu + sizeof(clientHandleLen), clientHandle, clientHandleLen);
+	memcpy(pdu + sizeof(clientHandleLen) + clientHandleLen, message, strlen(message));
 
 	// SEND PDU
 	safeSendPDU(serverSocket, pdu, pduLen, 4);
 }
-/*
-void multiCastPacket() {
+
+void sendMulticastPacket(uint8_t numHandles, char *destHandles[], char *message) {
 	// CREATE PDU
+	uint8_t destHandlesLen[numHandles];
+	int totalHandlesLen = 0;
+	for (int i = 0; i < numHandles; i++) {
+		uint8_t len = (uint8_t) strlen(destHandles[i]);
+		destHandlesLen[i] = len;
+		totalHandlesLen += len;
+	}
+	uint8_t messageLen = strlen(message) + 1; // with '\0'
+	uint8_t pduLen = sizeof(clientHandleLen) + clientHandleLen + sizeof(numHandles) + numHandles + totalHandlesLen + messageLen;
+	uint8_t pdu[pduLen];
 
 	// ASSEMBLE PDU
+	memcpy(pdu, &clientHandleLen, sizeof(clientHandleLen));
+	memcpy(pdu + sizeof(clientHandleLen), clientHandle, clientHandleLen);
+	memcpy(pdu + sizeof(clientHandleLen) + clientHandleLen, &numHandles, sizeof(numHandles));
+	int offset = sizeof(clientHandleLen) + clientHandleLen + sizeof(numHandles);
+	for (int i = 0; i < numHandles; i++) {
+		memcpy(pdu + offset, &destHandlesLen[i], sizeof(destHandlesLen[i]));
+		offset += sizeof(destHandlesLen[i]);
+		memcpy(pdu + offset, destHandles[i], destHandlesLen[i]);
+		offset += destHandlesLen[i];
+	}
+	memcpy(pdu + offset, message, messageLen);
 
 	// SEND PDU
-	//safeSendPDU();
+	safeSendPDU(serverSocket, pdu, pduLen, 6);
 }
-*/
 
-void listHandlesPacket(int serverSocket) {
+void sendTableRequestPacket() {
 	// SEND PDU
 	safeSendPDU(serverSocket, NULL, 0, 10);
 }

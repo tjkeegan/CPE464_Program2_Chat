@@ -37,6 +37,8 @@ void serverControl();
 
 void recvInitPacket(int clientSocket, uint8_t *dataBuffer);
 void recvMessagePacket(uint8_t *dataBuffer, int bufferLen);
+void recvMulticastPacket(int clientSocket, uint8_t *dataBuffer, int messageLen);
+void recvTableRequestPacket(int clientSocket);
 
 int main(int argc, char *argv[])
 {
@@ -110,14 +112,16 @@ void recvFromClient(int clientSocket)
 				recvInitPacket(clientSocket, dataBuffer);
 				break;
 			case 4: // BROADCAST PACKET
-				recvBroadcastPacket(clientSocket, dataBuffer);
+				//recvBroadcastPacket(clientSocket, dataBuffer);
 				break;
 			case 5: // MESSAGE PACKET
 				recvMessagePacket(dataBuffer, messageLen);
 				break;
 			case 6: // MULTICAST PACKET
+				recvMulticastPacket(clientSocket, dataBuffer, messageLen);
 				break;
 			case 10: // HANDLE LIST REQUEST
+				recvTableRequestPacket(clientSocket);
 				break;
 			
 			default:
@@ -128,6 +132,8 @@ void recvFromClient(int clientSocket)
 	{
 		printf("Socket %d: Connection closed by other side\n", clientSocket);
 		// remove from poll set and close socket
+		char *clientHandle = findHandle(clientSocket);
+		removeHandle(clientHandle); // error check
 		removeFromPollSet(clientSocket);
 		close(clientSocket);
 	}
@@ -149,8 +155,45 @@ void recvMessagePacket(uint8_t *dataBuffer, int bufferLen) {
 	safeSendPDU(destSocket, dataBuffer, bufferLen, 5);
 }
 
-void recvBroadcastPacket(int clientSocket, uint8_t *dataBuffer, int bufferLen) {
-	
+//void recvBroadcastPacket(int clientSocket, uint8_t *dataBuffer, int bufferLen) {}
+
+void recvMulticastPacket(int clientSocket, uint8_t *dataBuffer, int bufferLen) {
+	uint8_t sendHandleLen = dataBuffer[0];
+	uint8_t numHandles = dataBuffer[sizeof(sendHandleLen) + sendHandleLen];
+	int offset = sizeof(sendHandleLen) + sendHandleLen + sizeof(numHandles);
+	int destSocket = 0;
+	uint8_t destHandlesLen[numHandles];
+	uint8_t *destHandles[numHandles];
+	for (int i = 0; i < numHandles; i++) {
+		destHandlesLen[i] = dataBuffer[offset];
+		offset += sizeof(destHandlesLen[i]);
+		destHandles[i] = dataBuffer + offset;
+		offset += destHandlesLen[i];
+		destSocket = findSocket(destHandles[i], destHandlesLen[i]); // error check this
+		safeSendPDU(destSocket, dataBuffer, bufferLen, 6);
+	}
+}
+
+void recvTableRequestPacket(int clientSocket) {
+
+	// SEND NUMHANDLES PDU (FLAG 11)
+	uint32_t numHandles = getNumHandles();
+	uint32_t numHandles_net = htonl(numHandles);
+	uint8_t *numHandles_send = (uint8_t *) &numHandles_net;
+	safeSendPDU(clientSocket, numHandles_send, sizeof(numHandles_net), 11);
+
+	// SEND HANDLES PDUS (FLAG 12)
+	for (int i = 0; i < numHandles; i++) {
+		char *handle = findHandleByIndex(i);
+		uint8_t handleLen = strlen(handle); // no '\0'
+		uint8_t pdu[sizeof(handleLen) + handleLen];
+		pdu[0] = handleLen;
+		memcpy(pdu, handle, handleLen);
+		safeSendPDU(clientSocket, pdu, sizeof(handleLen) + handleLen, 12);
+	}
+
+	// SEND FINISHED PDU (FLAG 13)
+	safeSendPDU(clientSocket, NULL, 0, 13);
 }
 
 int checkArgs(int argc, char *argv[])

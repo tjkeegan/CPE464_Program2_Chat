@@ -44,17 +44,19 @@ void addHandle(int socket, char *handle) {
 
 int removeHandle(char *handle) {
     for (int i = 0; i < tableIndex; i++) {
-        if (handleTable[i].handle == handle) {
+        if (!memcmp(handleTable[i].handle, (char *) handle, strlen(handle))) {
             size_t entrySize = sizeof(handleTable[i]);
             free(handleTable[i].handle);
             for (int j = i; j < tableIndex - 1; j++) {
                 handleTable[j] = handleTable[j + 1];
             }
-            handleTable = realloc(handleTable, usedSize - entrySize);
-            if (handleTable == NULL) {
-                perror("Failed to reallocate Handle Table during removeHandle()");
-                exit(1);
-            }
+            // handleTable = realloc(handleTable, usedSize - entrySize);
+            // if (handleTable == NULL) {
+            //     perror("Failed to reallocate Handle Table during removeHandle()");
+            //     exit(1);
+            // }
+            usedSize -= entrySize;
+            tableIndex--;
             return 0;
         }
     }
@@ -74,4 +76,21 @@ int findSocket(uint8_t *handle, uint8_t handleLen) {
         }
     }
     return -1;
+}
+
+char *findHandle(int socket) {
+    for (int i = 0; i < tableIndex; i++) {
+        if (handleTable[i].socket == socket) {
+            return handleTable[i].handle;
+        }
+    }
+    return NULL;
+}
+
+char *findHandleByIndex(int index) {
+    return handleTable[index].handle;
+}
+
+int getNumHandles() {
+    return tableIndex;
 }
