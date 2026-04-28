@@ -17,6 +17,7 @@ void addHandle(int socket, char *handle);
 int removeHandle(char *handle);
 void printHandleTable();
 int findSocket(uint8_t *handle, uint8_t handleLen);
+int findSocketByIndex(int index);
 char *findHandle(int socket);
 char *findHandleByIndex(int index);
 int getNumHandles();

@@ -39,8 +39,8 @@ void clientControl();
 void sendInitPacket(char *argv[]);
 void parseStdin(uint8_t *buffer, int sendLen);
 void sendMessagePacket(char *destHandle, char *message);
-void sendBroadcastPacket(char *message);
 void sendMulticastPacket(uint8_t numHandles, char *destHandles[], char *message);
+void sendBroadcastPacket(char *message);
 void sendTableRequestPacket();
 
 void determinePacketType(uint8_t *dataBuffer, int bufferLen, int flag);
@@ -48,10 +48,12 @@ void recvHandleListLengthPacket(uint8_t *dataBuffer);
 void recvHandlePacket(uint8_t *dataBuffer, int bufferLen);
 void recvMessagePacket(uint8_t *dataBuffer, int bufferLen);
 void recvMulticastPacket(uint8_t *dataBuffer, int bufferLen);
+void recvBroadcastPacket();
 
 char *clientHandle; // no '\0'
 uint8_t clientHandleLen = 0;
 int serverSocket = 0;
+int receivingHandleList = 0;
 
 int main(int argc, char *argv[])
 {	
@@ -104,8 +106,10 @@ void clientControl() {
 
 	while (1) {
 
-		printf("$: ");
-		fflush(stdout); // forces buffered output to be written to stdout immediately
+		if (!receivingHandleList) {
+			printf("$: ");
+			fflush(stdout); // forces buffered output to be written to stdout immediately
+		}
 
 		// GET READY SOCKET
 		ready_socket = pollCall(-1); // blocks until a socket is ready
@@ -132,7 +136,7 @@ void clientControl() {
 			}
 
 			// SERVER TERMINATED
-			if (messageLen == 0){
+			if (messageLen == 0 && flag == 0){
 				printf("Server terminated\n");
 				removeFromPollSet(serverSocket);
 				close(serverSocket);
@@ -146,8 +150,6 @@ void clientControl() {
 }
 
 void determinePacketType(uint8_t *dataBuffer, int bufferLen, int flag) {
-	int receivingHandleList = 0;
-	
 	switch (flag) {
 		case 11: // NUMHANDLES PACKET
 			receivingHandleList = 1;
@@ -179,6 +181,7 @@ void determinePacketType(uint8_t *dataBuffer, int bufferLen, int flag) {
 					case 3: // BAD INIT HANDLE ERROR
 						break;
 					case 4: // BROADCAST PACKET
+						recvBroadcastPacket(dataBuffer, bufferLen);
 						break;
 					case 5: // MESSAGE PACKET
 						recvMessagePacket(dataBuffer, bufferLen);
@@ -197,15 +200,15 @@ void recvHandleListLengthPacket(uint8_t *dataBuffer) {
 	uint32_t numHandles_net;
 	memcpy(&numHandles_net, dataBuffer, sizeof(numHandles_net));
 	uint32_t numHandles = ntohl(numHandles_net);
-	printf("\nNumber of clients: %d\n", numHandles);
+	printf("Number of clients: %d\n", numHandles);
 }
 
 void recvHandlePacket(uint8_t *dataBuffer, int bufferLen) {
 	uint8_t handleLen = dataBuffer[0];
 	char handle[handleLen + 1]; // with '\0'
-	memcpy(handle, dataBuffer, handleLen);
+	memcpy(handle, dataBuffer + sizeof(handleLen), handleLen);
 	handle[handleLen] = '\0';
-	printf("\n\t%s\n", handle);
+	printf("   %s\n", handle);
 }
 
 void recvMessagePacket(uint8_t *dataBuffer, int bufferLen) {
@@ -233,8 +236,9 @@ void recvMulticastPacket(uint8_t *dataBuffer, int bufferLen) {
 
 	// PARSE SENDER HANDLE
 	uint8_t senderHandleLen = dataBuffer[0];
-	uint8_t senderHandle[senderHandleLen];
+	uint8_t senderHandle[senderHandleLen + 1];
 	memcpy(senderHandle, dataBuffer + sizeof(senderHandleLen), senderHandleLen);
+	senderHandle[senderHandleLen] = '\0';
 	
 	// PARSE PAST DEST HANDLES
 	uint8_t numHandles = dataBuffer[sizeof(senderHandleLen) + senderHandleLen];
@@ -247,6 +251,23 @@ void recvMulticastPacket(uint8_t *dataBuffer, int bufferLen) {
 	uint8_t messageLen = bufferLen - offset;
 	uint8_t message[messageLen];
 	memcpy(message, dataBuffer + offset, messageLen);
+
+	// PRINT MESSAGE
+	printf("\n%s: %s\n", senderHandle, message);
+}
+
+void recvBroadcastPacket(uint8_t *dataBuffer, int bufferLen){
+	// PARSE SENDER HANDLE
+	uint8_t senderHandleLen = dataBuffer[0];
+	char senderHandle[senderHandleLen + 1]; // with '\0'
+	memcpy(senderHandle, dataBuffer + sizeof(senderHandleLen), senderHandleLen);
+	senderHandle[senderHandleLen] = '\0';
+
+	// PARSE MESSAGE
+	uint8_t messageOffset = sizeof(senderHandleLen) + senderHandleLen;
+	int messageLen = bufferLen - messageOffset;
+	char message[messageLen];
+	memcpy(message, dataBuffer + messageOffset, messageLen);
 
 	// PRINT MESSAGE
 	printf("\n%s: %s\n", senderHandle, message);
@@ -302,8 +323,8 @@ void parseStdin(uint8_t *buffer, int sendLen) {
 			}
 			case 'B':
 			case 'b': {
-				/*char *message = strtok(NULL, "");
-				broadcastPacket(message);*/
+				char *message = strtok(NULL, "");
+				sendBroadcastPacket(message);
 				break;
 			}
 			case 'C':
@@ -348,21 +369,6 @@ void sendMessagePacket(char *destHandle, char *message) {
 	safeSendPDU(serverSocket, pdu, pduSize, 5);
 }
 
-
-void sendBroadcastPacket(char *message) {
-	// CREATE PDU
-	uint8_t pduLen = sizeof(clientHandleLen) + clientHandleLen + strlen(message);
-	uint8_t pdu[pduLen];
-
-	// ASSEMBLE PDU
-	memcpy(pdu, &clientHandleLen, sizeof(clientHandleLen));
-	memcpy(pdu + sizeof(clientHandleLen), clientHandle, clientHandleLen);
-	memcpy(pdu + sizeof(clientHandleLen) + clientHandleLen, message, strlen(message));
-
-	// SEND PDU
-	safeSendPDU(serverSocket, pdu, pduLen, 4);
-}
-
 void sendMulticastPacket(uint8_t numHandles, char *destHandles[], char *message) {
 	// CREATE PDU
 	uint8_t destHandlesLen[numHandles];
@@ -373,7 +379,7 @@ void sendMulticastPacket(uint8_t numHandles, char *destHandles[], char *message)
 		totalHandlesLen += len;
 	}
 	uint8_t messageLen = strlen(message) + 1; // with '\0'
-	uint8_t pduLen = sizeof(clientHandleLen) + clientHandleLen + sizeof(numHandles) + numHandles + totalHandlesLen + messageLen;
+	size_t pduLen = sizeof(clientHandleLen) + clientHandleLen + sizeof(numHandles) + numHandles + totalHandlesLen + messageLen;
 	uint8_t pdu[pduLen];
 
 	// ASSEMBLE PDU
@@ -393,8 +399,24 @@ void sendMulticastPacket(uint8_t numHandles, char *destHandles[], char *message)
 	safeSendPDU(serverSocket, pdu, pduLen, 6);
 }
 
+void sendBroadcastPacket(char *message) {
+	// CREATE PDU
+	int messageLen = strlen(message) + 1; // send message with '\0'
+	uint8_t pduLen = sizeof(clientHandleLen) + clientHandleLen + messageLen;
+	uint8_t pdu[pduLen];
+
+	// ASSEMBLE PDU
+	memcpy(pdu, &clientHandleLen, sizeof(clientHandleLen));
+	memcpy(pdu + sizeof(clientHandleLen), clientHandle, clientHandleLen);
+	memcpy(pdu + sizeof(clientHandleLen) + clientHandleLen, message, messageLen);
+
+	// SEND PDU
+	safeSendPDU(serverSocket, pdu, pduLen, 4);
+}
+
 void sendTableRequestPacket() {
 	// SEND PDU
+	receivingHandleList = 1;
 	safeSendPDU(serverSocket, NULL, 0, 10);
 }
 

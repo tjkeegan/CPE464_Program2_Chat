@@ -37,6 +37,7 @@ void serverControl();
 
 void recvInitPacket(int clientSocket, uint8_t *dataBuffer);
 void recvMessagePacket(uint8_t *dataBuffer, int bufferLen);
+void recvBroadcastPacket(int clientSocket, uint8_t *dataBuffer, int bufferLen);
 void recvMulticastPacket(int clientSocket, uint8_t *dataBuffer, int messageLen);
 void recvTableRequestPacket(int clientSocket);
 
@@ -103,7 +104,7 @@ void recvFromClient(int clientSocket)
 		exit(-1);
 	}
 
-	if (messageLen > 0)
+	if (messageLen > 0 || flag != 0)
 	{
 		//printf("Message received on socket %d, Flag: %d length: %d Data: %s\n", clientSocket, flag, messageLen, (char *)(dataBuffer + 1));
 		
@@ -112,7 +113,7 @@ void recvFromClient(int clientSocket)
 				recvInitPacket(clientSocket, dataBuffer);
 				break;
 			case 4: // BROADCAST PACKET
-				//recvBroadcastPacket(clientSocket, dataBuffer);
+				recvBroadcastPacket(clientSocket, dataBuffer, messageLen);
 				break;
 			case 5: // MESSAGE PACKET
 				recvMessagePacket(dataBuffer, messageLen);
@@ -141,8 +142,9 @@ void recvFromClient(int clientSocket)
 
 void recvInitPacket(int clientSocket, uint8_t *dataBuffer) {
 	uint8_t handleLen = dataBuffer[0];
-	char handle[handleLen];
+	char handle[handleLen + 1];
 	memcpy(handle, dataBuffer + sizeof(handleLen), handleLen);
+	handle[handleLen] = '\0';
 	addHandle(clientSocket, handle);
 }
 
@@ -155,7 +157,15 @@ void recvMessagePacket(uint8_t *dataBuffer, int bufferLen) {
 	safeSendPDU(destSocket, dataBuffer, bufferLen, 5);
 }
 
-//void recvBroadcastPacket(int clientSocket, uint8_t *dataBuffer, int bufferLen) {}
+void recvBroadcastPacket(int clientSocket, uint8_t *dataBuffer, int bufferLen) {
+	int numHandles = getNumHandles();
+	for (int i = 0; i < numHandles; i++) {
+		int destSocket = findSocketByIndex(i);
+		if (destSocket != clientSocket) {
+			safeSendPDU(destSocket, dataBuffer, bufferLen, 4);
+		}
+	}
+}
 
 void recvMulticastPacket(int clientSocket, uint8_t *dataBuffer, int bufferLen) {
 	uint8_t sendHandleLen = dataBuffer[0];
@@ -188,7 +198,7 @@ void recvTableRequestPacket(int clientSocket) {
 		uint8_t handleLen = strlen(handle); // no '\0'
 		uint8_t pdu[sizeof(handleLen) + handleLen];
 		pdu[0] = handleLen;
-		memcpy(pdu, handle, handleLen);
+		memcpy(pdu + sizeof(handleLen), handle, handleLen);
 		safeSendPDU(clientSocket, pdu, sizeof(handleLen) + handleLen, 12);
 	}
 
@@ -214,4 +224,3 @@ int checkArgs(int argc, char *argv[])
 	
 	return portNumber;
 }
-

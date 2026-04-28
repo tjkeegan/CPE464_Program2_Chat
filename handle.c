@@ -78,6 +78,10 @@ int findSocket(uint8_t *handle, uint8_t handleLen) {
     return -1;
 }
 
+int findSocketByIndex(int index) {
+    return handleTable[index].socket;
+}
+
 char *findHandle(int socket) {
     for (int i = 0; i < tableIndex; i++) {
         if (handleTable[i].socket == socket) {

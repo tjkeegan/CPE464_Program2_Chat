@@ -10,7 +10,9 @@ int sendPDU(int socketNumber, uint8_t *dataBuffer, int lengthOfData, uint8_t fla
     // CREATE PDU
     memcpy(pdu, &lengthOfPDU_net, LENGTH_OF_PDU_SIZE);
     memcpy(pdu + LENGTH_OF_PDU_SIZE, &flag, FLAG_SIZE);
-    memcpy(pdu + LENGTH_OF_PDU_SIZE + FLAG_SIZE, dataBuffer, lengthOfData);
+    if (lengthOfData > 0) {
+        memcpy(pdu + LENGTH_OF_PDU_SIZE + FLAG_SIZE, dataBuffer, lengthOfData);
+    }
 
     // SEND PDU
     ssize_t bytes_sent = send(socketNumber, pdu, lengthOfPDU, 0);

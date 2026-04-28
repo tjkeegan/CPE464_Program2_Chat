@@ -12,6 +12,7 @@ int recvPDU(int clientSocket, uint8_t * dataBuffer, int bufferSize, uint8_t *fla
         exit(1);
     }
     if (bytes_received == 0) {
+        *flag = 0;
         return 0;
     }
 
@@ -27,6 +28,10 @@ int recvPDU(int clientSocket, uint8_t * dataBuffer, int bufferSize, uint8_t *fla
         exit(1);
     }
 
+    if (payload_len == 0) {
+        return 0;
+    }
+
     // RECEIVE PAYLOAD
     bytes_received = recv(clientSocket, dataBuffer, payload_len, MSG_WAITALL);
     if (bytes_received < 0) {
@@ -35,6 +40,7 @@ int recvPDU(int clientSocket, uint8_t * dataBuffer, int bufferSize, uint8_t *fla
     }
     if (bytes_received == 0) {
         printf("connection closed");
+        *flag = 0;
         return 0;
     }
 
