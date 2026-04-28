@@ -28,8 +28,9 @@
 #include "recvPDU.h"
 #include "pollLib.h"
 
-#define MAXBUF 1024
+#define MAXBUF 1400
 #define DEBUG_FLAG 1
+#define MAX_HANDLE_LEN 100
 
 void sendToServer();
 int readFromStdin(uint8_t *buffer);
@@ -48,9 +49,11 @@ void recvHandleListLengthPacket(uint8_t *dataBuffer);
 void recvHandlePacket(uint8_t *dataBuffer, int bufferLen);
 void recvMessagePacket(uint8_t *dataBuffer, int bufferLen);
 void recvMulticastPacket(uint8_t *dataBuffer, int bufferLen);
-void recvBroadcastPacket();
+void recvBroadcastPacket(uint8_t *dataBuffer, int bufferLen);
+void recvBadDestHandlePacket(uint8_t *dataBuffer);
+void printUsage();
 
-char *clientHandle; // no '\0'
+char clientHandle[MAX_HANDLE_LEN]; // no '\0'
 uint8_t clientHandleLen = 0;
 int serverSocket = 0;
 int receivingHandleList = 0;
@@ -78,15 +81,14 @@ void sendInitPacket(char *argv[]) {
 	int bytesSent = 0;
 
 	// CREATE FLAG 1 PDU
+	if (strlen(argv[1]) > 100) {
+		printf("Handle names longer than 100 chars not accepted.");
+		exit(1);
+	}
 	clientHandleLen = strlen(argv[1]); // no '\0'
 	uint8_t flag1PDU[sizeof(clientHandleLen) + clientHandleLen];
-
+	
 	// set global variable
-	clientHandle = malloc(clientHandleLen);
-	if (clientHandle == NULL) {
-		perror("Failed to allocate clientHandle");
-		exit(1);
-	}	
 	memcpy(clientHandle, argv[1], clientHandleLen);
 
 	// ASSEMBLE FLAG 1 PDU 
@@ -103,12 +105,14 @@ void sendInitPacket(char *argv[]) {
 
 void clientControl() {
 	int ready_socket = -1;
+	int promptPrinted = 0;
 
 	while (1) {
 
-		if (!receivingHandleList) {
+		if (!receivingHandleList && !promptPrinted) {
 			printf("$: ");
 			fflush(stdout); // forces buffered output to be written to stdout immediately
+			promptPrinted = 1;
 		}
 
 		// GET READY SOCKET
@@ -121,6 +125,7 @@ void clientControl() {
 		// STDIN READY
 		if (ready_socket == STDIN_FILENO) {
 			sendToServer();
+			promptPrinted = 0;
 		}
 
 		// SERVER SOCKET READY
@@ -137,7 +142,7 @@ void clientControl() {
 
 			// SERVER TERMINATED
 			if (messageLen == 0 && flag == 0){
-				printf("Server terminated\n");
+				printf("Server Terminated\n");
 				removeFromPollSet(serverSocket);
 				close(serverSocket);
 				exit(1);
@@ -145,6 +150,9 @@ void clientControl() {
 
 			determinePacketType(dataBuffer, messageLen, flag);
 			//printf("Socket %d: Message received, length: %d Data: %s\n", serverSocket, messageLen, dataBuffer);
+			if (flag != 2) {
+				promptPrinted = 0;
+			}
 		}
 	}
 }
@@ -177,9 +185,17 @@ void determinePacketType(uint8_t *dataBuffer, int bufferLen, int flag) {
 			else {
 				switch (flag) {
 					case 2: // GOOD INIT HANDLE CONFIRMATION
+						// do nothing, all is well
 						break;
-					case 3: // BAD INIT HANDLE ERROR
+					case 3: { // BAD INIT HANDLE ERROR
+						uint8_t handleLen = dataBuffer[0];
+						uint8_t handle[handleLen + 1];
+						memcpy(handle, dataBuffer + sizeof(handleLen), handleLen);
+						handle[handleLen] = '\0';
+						printf("\nHandle already in use: %s\n", handle);
+						exit(1);
 						break;
+					}
 					case 4: // BROADCAST PACKET
 						recvBroadcastPacket(dataBuffer, bufferLen);
 						break;
@@ -190,6 +206,7 @@ void determinePacketType(uint8_t *dataBuffer, int bufferLen, int flag) {
 						recvMulticastPacket(dataBuffer, bufferLen);
 						break;
 					case 7: // BAD DEST HANDLE ERROR
+						recvBadDestHandlePacket(dataBuffer);
 						break;
 				}
 			}
@@ -273,6 +290,14 @@ void recvBroadcastPacket(uint8_t *dataBuffer, int bufferLen){
 	printf("\n%s: %s\n", senderHandle, message);
 }
 
+void recvBadDestHandlePacket(uint8_t *dataBuffer) {
+	uint8_t destHandleLen = dataBuffer[0];
+	uint8_t destHandle[destHandleLen + 1]; // add '\0'
+	memcpy(destHandle, dataBuffer + sizeof(destHandleLen), destHandleLen);
+	destHandle[destHandleLen] = '\0';
+	printf("\nClient with handle %s does not exist.\n", destHandle);
+}
+
 void sendToServer()
 {
 	uint8_t buffer[MAXBUF];   //data buffer
@@ -309,7 +334,7 @@ int readFromStdin(uint8_t * buffer)
 
 void parseStdin(uint8_t *buffer, int sendLen) {
 	if (sendLen < 2) {
-		printf("usage:");
+		printUsage();
 	}
 	else {
 		char *command = strtok((char *) buffer, " ");
@@ -318,24 +343,55 @@ void parseStdin(uint8_t *buffer, int sendLen) {
 			case 'm': {
 				char *handle = strtok(NULL, " ");
 				char *message = strtok(NULL, "");
-				sendMessagePacket(handle, message);
+				while (strlen(message) >= 199) {
+					char buffer[200];
+					strncpy(buffer, message, 199);
+					buffer[199] = '\0';
+					sendMessagePacket(handle, buffer);
+					message = message + 199;
+				}
+				if (strlen(message) > 0) {
+					sendMessagePacket(handle, message);
+				}
 				break;
 			}
 			case 'B':
 			case 'b': {
 				char *message = strtok(NULL, "");
-				sendBroadcastPacket(message);
+				while (strlen(message) >= 199) {
+					char buffer[200];
+					strncpy(buffer, message, 199);
+					buffer[199] = '\0';
+					sendBroadcastPacket(buffer);
+					message = message + 199;
+				}
+				if (strlen(message) > 0) {
+					sendBroadcastPacket(message);
+				}
 				break;
 			}
 			case 'C':
 			case 'c': { // brackets to make it ok to declare variables
 				uint8_t numHandles = (uint8_t)atoi(strtok(NULL, " "));
+				if ((numHandles < 2) || (numHandles > 9)) {
+					printf("Number of target handles must be between 2 and 9\n");
+					break;
+				}
 				char *destHandles[numHandles];
 				for (int i = 0; i < numHandles; i++) {
 					destHandles[i] = strtok(NULL, " ");
 				}
 				char *message = strtok(NULL, "");
-				sendMulticastPacket(numHandles, destHandles, message);
+				while (strlen(message) >= 199) {
+					char buffer[200];
+					strncpy(buffer, message, 199);
+					buffer[199] = '\0';
+					sendMulticastPacket(numHandles, destHandles, buffer);
+					message = message + 199;
+				}
+				if (strlen(message) > 0) {
+					sendMulticastPacket(numHandles, destHandles, message);
+				}
 				break;
 			}
 			case 'L':
@@ -343,9 +399,20 @@ void parseStdin(uint8_t *buffer, int sendLen) {
 				sendTableRequestPacket();
 				break;
 			default:
+				printUsage();
 				break;
 		}
 	}
+}
+
+void printUsage() {
+	printf(
+		"Usage:"
+		"\n   %%M destination-handle [text]"
+		"\n   %%B [text]"
+		"\n   %%C num-handles destination-handle destination-handle [destination-handle] [text]"
+		"\n   %%L\n"
+	);
 }
 
 void sendMessagePacket(char *destHandle, char *message) {

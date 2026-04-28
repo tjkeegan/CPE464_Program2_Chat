@@ -21,7 +21,7 @@ void handleTeardown() {
     free(handleTable);
 }
 
-void addHandle(int socket, char *handle) {
+void addHandle(int socket, char *handle) {  
     char *handleDup = malloc(strlen(handle) + 1); // +1 for '\0'
     if (handleDup == NULL) {
         perror("Failed to allocate handleDup during addHandle()");
@@ -79,7 +79,10 @@ int findSocket(uint8_t *handle, uint8_t handleLen) {
 }
 
 int findSocketByIndex(int index) {
-    return handleTable[index].socket;
+    if ((index < tableIndex) && (index >= 0)) {
+        return handleTable[index].socket;
+    }
+    return -1;
 }
 
 char *findHandle(int socket) {
@@ -92,7 +95,10 @@ char *findHandle(int socket) {
 }
 
 char *findHandleByIndex(int index) {
-    return handleTable[index].handle;
+    if ((index < tableIndex) && (index >= 0)) {
+        return handleTable[index].handle;
+    }
+    return NULL;
 }
 
 int getNumHandles() {

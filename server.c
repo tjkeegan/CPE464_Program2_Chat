@@ -36,7 +36,7 @@ int checkArgs(int argc, char *argv[]);
 void serverControl();
 
 void recvInitPacket(int clientSocket, uint8_t *dataBuffer);
-void recvMessagePacket(uint8_t *dataBuffer, int bufferLen);
+void recvMessagePacket(int clientSocket, uint8_t *dataBuffer, int bufferLen);
 void recvBroadcastPacket(int clientSocket, uint8_t *dataBuffer, int bufferLen);
 void recvMulticastPacket(int clientSocket, uint8_t *dataBuffer, int messageLen);
 void recvTableRequestPacket(int clientSocket);
@@ -116,7 +116,7 @@ void recvFromClient(int clientSocket)
 				recvBroadcastPacket(clientSocket, dataBuffer, messageLen);
 				break;
 			case 5: // MESSAGE PACKET
-				recvMessagePacket(dataBuffer, messageLen);
+				recvMessagePacket(clientSocket, dataBuffer, messageLen);
 				break;
 			case 6: // MULTICAST PACKET
 				recvMulticastPacket(clientSocket, dataBuffer, messageLen);
@@ -134,7 +134,9 @@ void recvFromClient(int clientSocket)
 		printf("Socket %d: Connection closed by other side\n", clientSocket);
 		// remove from poll set and close socket
 		char *clientHandle = findHandle(clientSocket);
-		removeHandle(clientHandle); // error check
+		if (clientHandle != NULL) {
+			removeHandle(clientHandle);
+		}
 		removeFromPollSet(clientSocket);
 		close(clientSocket);
 	}
@@ -145,16 +147,30 @@ void recvInitPacket(int clientSocket, uint8_t *dataBuffer) {
 	char handle[handleLen + 1];
 	memcpy(handle, dataBuffer + sizeof(handleLen), handleLen);
 	handle[handleLen] = '\0';
-	addHandle(clientSocket, handle);
+	if (findSocket((uint8_t *)handle, handleLen) != -1) {
+		safeSendPDU(clientSocket, dataBuffer, sizeof(handleLen) + handleLen, 3);
+	}
+	else {
+		addHandle(clientSocket, handle);
+		safeSendPDU(clientSocket, NULL, 0, 2);
+	}
 }
 
-void recvMessagePacket(uint8_t *dataBuffer, int bufferLen) {
+void recvMessagePacket(int clientSocket, uint8_t *dataBuffer, int bufferLen) {
 	uint8_t sendHandleLen = dataBuffer[0];
 	uint8_t destHandleLen = dataBuffer[sendHandleLen + 2]; // +2 for handleLen and numDest values
 	uint8_t destHandle[destHandleLen];
 	memcpy(destHandle, dataBuffer + sizeof(sendHandleLen) + sendHandleLen + 1 + sizeof(destHandleLen), destHandleLen);
 	int destSocket = findSocket(destHandle, destHandleLen);
-	safeSendPDU(destSocket, dataBuffer, bufferLen, 5);
+	if (destSocket == -1) {
+		uint8_t pdu[sizeof(destHandleLen) + destHandleLen];
+		pdu[0] = destHandleLen;
+		memcpy(pdu + sizeof(destHandleLen), destHandle, destHandleLen);
+		safeSendPDU(clientSocket, pdu, sizeof(destHandleLen) + destHandleLen, 7);
+	}
+	else {
+		safeSendPDU(destSocket, dataBuffer, bufferLen, 5);
+	}
 }
 
 void recvBroadcastPacket(int clientSocket, uint8_t *dataBuffer, int bufferLen) {
@@ -179,8 +195,17 @@ void recvMulticastPacket(int clientSocket, uint8_t *dataBuffer, int bufferLen) {
 		offset += sizeof(destHandlesLen[i]);
 		destHandles[i] = dataBuffer + offset;
 		offset += destHandlesLen[i];
-		destSocket = findSocket(destHandles[i], destHandlesLen[i]); // error check this
-		safeSendPDU(destSocket, dataBuffer, bufferLen, 6);
+		destSocket = findSocket(destHandles[i], destHandlesLen[i]);
+		if (destSocket == -1) {
+			uint8_t pdu[sizeof(destHandlesLen[i]) + destHandlesLen[i]];
+			pdu[0] = destHandlesLen[i];
+			memcpy(pdu + sizeof(destHandlesLen[i]), destHandles[i], destHandlesLen[i]);
+			safeSendPDU(clientSocket, pdu, sizeof(destHandlesLen[i]) + destHandlesLen[i], 7);
+		}
+		else {
+			safeSendPDU(destSocket, dataBuffer, bufferLen, 6);
+		}
+		
 	}
 }
 
